@@ -1,0 +1,347 @@
+---
+title: "DSBI Group Project - Group 9"
+author: Farrah Xie
+output:
+  pdf_document:
+    toc: yes
+  html_notebook:
+    number_sections: yes
+    toc: yes
+  word_document:
+    toc: yes
+---
+
+# Set up environment & import libraries
+```{r}
+rm(list = ls())
+suppressMessages(library(gridExtra))
+suppressMessages(library(tidyverse))
+suppressMessages(library(ggplot2))
+suppressMessages(library(GGally))
+suppressMessages(library(MASS))
+suppressMessages(library(smotefamily))
+suppressMessages(library(randomForest))
+suppressMessages(library(rpart))
+suppressMessages(library(rpart.plot))
+suppressMessages(library(e1071))
+```
+
+
+# Preparing dataset
+```{r}
+setwd("/Users/yumanxie/Desktop/DSBI")
+df = read.csv("Telco.csv", sep=",", na.strings="?")
+glimpse(df)
+```
+
+Change some of the column names
+```{r}
+colnames(df)<-c("customerID","gender","seniorCitizen","partner","dependents","tenure","phoneService","multipleLines","internetService","onlineSecurity","onlineBackup","deviceProtection","techSupport","streamingTV","streamingMovies","contract","paperlessBilling","paymentMethod","monthlyCharges","totalCharges","churn")
+summary(df)
+```
+
+## Omit NA
+We can see the variable seniorCitizen is not a factor, thus we turn it into a categorical variable; There are 11 NA's in totalCharges, we choose to omit them
+```{r}
+df <- df %>% mutate(seniorCitizen=as.factor(seniorCitizen)) %>% na.omit()
+summary(df)
+```
+
+We omit the column columnID, and convert records with no internet service to No in onlineBackup, deviceProtection, techSupport, streamingTV and stramingMovies 
+```{r}
+df <- df %>% dplyr::select(-customerID) %>%
+  mutate_at(7,~as.factor(case_when(. =="No phone service"~"No",.=="No"~"No",.=="Yes"~"Yes"))) %>%
+  mutate_at(c(9:14),~as.factor(case_when(.=="No internet service"~"No", .=="No"~"No", .=="Yes"~"Yes")))
+summary(df)
+```
+
+Next we take a look at numerical variables, grouped by gender
+```{r}
+df %>% group_by(gender) %>% summarize ("Number of observations"=n(),"Average Tenure in Months"=round(mean(tenure),0),"Monthly Charges"=round(mean(monthlyCharges),2),"Average Total Charges"=round(mean(totalCharges),2))
+```
+From the summary above we can see that there are slightly more male than female (1.9%). Both female and male have average tenure of around 32 months, with male having 1 more months in average tenure (33).Female has slightly higher (1.3%) monthly charges than male. Both male and female have around $2283 average total charges
+
+
+# Explorative Data Analysis
+Because most of our attributes are binary, we chose to use histogram for visualization
+
+## Histograms for numerical variables
+```{r}
+df <-df %>% mutate(churn=as.factor(churn))
+g1 <- df %>% ggplot(aes(x=churn, y=tenure, fill=fct_rev(churn))) + geom_bar(stat="summary", fun="mean", alpha=0.6, show.legend=F) + stat_summary(aes(label=paste(round(..y.., 0), "months")), fun=mean, geom="text", size=3.5, vjust = -0.5) + labs(title = "Average Tenure")
+g2 <- df %>% ggplot(aes(x=churn, y=monthlyCharges, fill=fct_rev(churn))) + geom_bar(stat="summary", fun="mean", alpha=0.6, show.legend=F) + stat_summary(aes(label = paste(round(..y.., 0), "months")), fun=mean, geom="text", size=3.5, vjust = -0.5) + labs(title = "Average Monthly Charges")
+
+grid.arrange(g1, g2, ncol = 2, nrow = 1)
+```
+From the histograms above, we can see that customers churn are having fewer months of tenure and higher average monthly charges.
+
+## Histograms for categorical variables
+```{r}
+g3 <- df %>% ggplot(aes(x=contract, fill=fct_rev(churn)))+  geom_bar(alpha=0.6) + labs(title="Customer Churn by Contract Type", y="Count of Contract Type")
+g4 <- df %>% ggplot(aes(x=paymentMethod, fill=fct_rev(churn)))+ geom_bar(alpha=0.6) + labs(title="Customer Churn by Contract Type", y="Count of Payment Method")
+g5 <- df %>% ggplot(aes(x=internetService, fill=fct_rev(churn)))+  geom_bar(alpha=0.6) + labs(title="Customer Churn by Contract Type", y="Count of Internet Service") 
+
+grid.arrange(g3, g4, g5)
+```
+From the histograms we can see that more customers pay by month-to-month using electronic checks, and these type of customers have the largest percentage of customers churned. Customer under one-year or two-year contracts are much less likely to churn. Customers using automatic payment methods (bank transfer and credit card), as well as mailed check are less likely to churn. Customers usiong Fiber Optic are most likely to churn.
+
+g7 <- df %>% ggplot(aes(x=gender), group=churn)+  geom_bar(aes(y=..prop..,fill=fct_rev(churn)), stat="count", alpha=0.6, show.legend=T) + labs(title="Customer Churn on Gender") 
+## Histograms for demographic variables
+```{r}
+g6 <- df %>% ggplot(aes(x=ifelse(seniorCitizen==1, "Senior", "Not Senior"), fill=fct_rev(churn)))+  geom_bar(alpha=0.6) + labs(title="Customer Churn on Senior Citizens", y="Count of Senior Citizen")
+g7 <- df %>% ggplot(aes(x=gender, fill=fct_rev(churn)))+  geom_bar(alpha=0.6) + labs(title="Customer Churn on Gender", y="Count of Gender")
+g8 <- df %>% ggplot(aes(x=partner, fill=fct_rev(churn))) + geom_bar(alpha=0.6) + labs(title="Customer Churn on Partner", y="Count of Partner") 
+g9 <- df %>% ggplot(aes(x=dependents, fill=fct_rev(churn)))+  geom_bar(alpha=0.6) + labs(title="Customer Churn on Dependents", y="Count of Dependents") 
+
+grid.arrange(g6, g7, g8, g9)
+```
+From the histograms above, we can see customer demography, specifically Senior Citizen, Partner, and Dependents, might affect customer churn. We might choose to omit variable Gender in further modeling.
+
+```{r}
+g10 <- df %>% ggplot(aes(x=phoneService, fill=fct_rev(churn)))+  geom_bar(alpha=0.6) + labs(title="Customer Churn on Phone Service", y="Count of Phone Service")
+g11 <- df %>% ggplot(aes(x=multipleLines, fill=fct_rev(churn)))+  geom_bar(alpha=0.6) + labs(title="Customer Churn on Multiple Lines", y="Count of Mulitple Lines")
+g12 <- df %>% ggplot(aes(x=onlineSecurity, fill=fct_rev(churn))) + geom_bar(alpha=0.6) + labs(title="Customer Churn on Online Security", y="Count of Online Security") 
+g13 <- df %>% ggplot(aes(x=onlineBackup, fill=fct_rev(churn)))+  geom_bar(alpha=0.6) + labs(title="Customer Churn on Online Backup", y="Count of Online Backup") 
+
+grid.arrange(g10, g11, g12, g13, ncol=2)
+```
+
+```{r}
+g14 <- df %>% ggplot(aes(x=deviceProtection, fill=fct_rev(churn))) +  geom_bar(alpha=0.6) + labs(title="Customer Churn on Device Protection", y="Count of Device Protection")
+g15 <- df %>% ggplot(aes(x=techSupport, fill=fct_rev(churn)))+  geom_bar(alpha=0.6) + labs(title="Customer Churn on Tech Support", y="Count of Tech Support")
+g16 <- df %>% ggplot(aes(x=streamingTV, fill=fct_rev(churn))) + geom_bar(alpha=0.6) + labs(title="Customer Churn on Streaming TV", y="Count of Streaming TV") 
+g17 <- df %>% ggplot(aes(x=streamingMovies, fill=fct_rev(churn)))+  geom_bar(alpha=0.6) + labs(title="Customer Churn on Streaming Movies", y="Count of Streaming Movies")
+g18 <- df %>% ggplot(aes(x=paperlessBilling, fill=fct_rev(churn)))+  geom_bar(alpha=0.6) + labs(title="Customer Churn on Paperless Billing", y="Count of Paperless Billing")
+
+grid.arrange(g14, g15, g16, g17, g18, ncol=2)
+```
+
+```{r}
+grid.arrange(g10, g11, g12, g13, g14, g15, g16, g17, g18, ncol=3)
+```
+From the plot we can see, Multiple Lines, Streaming TV, Streaming Movies have very similar patterns. Online Security and TechSupport have very similar patterns. Online backup and Device protection have very similar patterns.
+
+## Correlation plot for numerical variables
+```{r}
+df %>% dplyr::select(tenure, monthlyCharges, totalCharges, churn) %>% ggpairs(aes(color=fct_rev(churn)),diag = list(continuous = wrap("densityDiag", alpha = 0.6), discrete = wrap("barDiag", alpha = 0.7, color="grey30")))
+```
+Total Charges is strongly correlated with Tenure, especially among customers who churn. Total Charges is also highly correlated with Monthly Charges. From the histograms we can see, tenure is relative uniform when churn is no, and left skewed when churn is yes. Distribution for Monthly Charges is variant, when churn is no it's more left skewed, when churn is yes it's more right skewed. For Total Charges, both churn yes and no have left skewed distribution.
+
+## Variable selection
+From the result of EDA, we decided to omit Total Charges, due to multicollinearity. We think Gender, Multiple Lines, Streaming Movies, Tech Support, and Device Protection might not contributing to model building either, but we chose not to omit them in the beginning.
+
+
+# Data preprocessing
+## Use variables selected in variable selection only
+```{r}
+df1 <- df %>% dplyr::select(-totalCharges)
+glimpse(df1)
+```
+
+## Normalize numerical variables
+```{r}
+min_max_norm <- function(x) {
+    (x - min(x)) / (max(x) - min(x))
+}
+
+norm <- as.data.frame(lapply(df1[,c(5,18)], min_max_norm))
+summary(norm)
+
+df_normed <- df1 %>% dplyr::select(-c(5,18)) %>% cbind(norm)
+glimpse(df_normed)
+```
+
+Randomly Shuffle data and 
+
+## Split data into 70%-30% train and test datasets
+```{r}
+set.seed(1)
+train = sample(nrow(df_normed),nrow(df_normed)*0.7,replace=FALSE)
+df_train = df_normed[train,]
+df_test = df_normed[-train,]
+dim(df_train)
+dim(df_test)
+```
+
+
+# Modeling and model validation
+## Logistic Regression
+```{r}
+model_logit_train <- glm(churn~., df_train, family="binomial")
+summary(model_logit_train)
+```
+
+```{r}
+df_test$logit_pred_prob<-predict(model_logit_train, df_test, type="response")
+df_test$logit_pred_class<-ifelse(df_test$logit_pred_prob>0.5,"Yes","No")
+glimpse(df_test)
+```
+
+Accuracy
+```{r}
+mean(df_test$logit_pred_class==df_test$churn)
+```
+
+Confusion Matrix
+```{r}
+logit_ct <- table(df_test$logit_pred_class, df_test$churn)
+logit_ct
+logit_recall <- logit_ct[2,2]/(logit_ct[2,2]+logit_ct[1,2])
+logit_recall
+```
+
+
+## Classification Tree
+```{r}
+model_tree <- rpart(churn~., df_train, method="class", control=rpart.control(cp=0.03))
+rpart.plot(model_tree)
+```
+
+```{r}
+df_test$tree_pred_prob <- predict(model_tree, df_test)[,2] 
+df_test$tree_pred_class<-ifelse(df_test$tree_pred_prob>0.5,"Yes","No")
+```
+
+Accuracy
+```{r}
+mean(df_test$tree_pred_class==df_test$churn)
+```
+
+Confusion Matrix
+```{r}
+tree_ct <- table(df_test$tree_pred_class, df_test$churn)
+tree_ct
+tree_recall <- tree_ct[2,2]/(tree_ct[2,2]+tree_ct[1,2])
+tree_recall
+```
+We're interested in recall value, because we want to be safe than sorry.
+
+## Random Forest
+```{r}
+model_rf <- randomForest(churn~., df_train, ntree=500, mtry=2)
+df_test$rf_vote <- predict(model_rf,df_test,type="class")
+```
+
+Random Forest Accuracy
+```{r}
+mean(df_test$rf_vote==df_test$churn)
+```
+
+Random Forest Confusion Matrix
+```{r}
+rf_ct <- table(df_test$rf_vote, df_test$churn)
+rf_ct
+rf_recall <- rf_ct[2,2]/(rf_ct[2,2]+rf_ct[1,2])
+rf_recall
+```
+
+## SVM
+```{r}
+model_svm <- svm(churn~., df_train, kernel="linear", cost=0.1)
+model_svm
+```
+
+SVM validation
+```{r}
+predicted_svm<-predict(model_svm,df_test,decision.values = TRUE)
+```
+
+SVM Accuracy
+```{r}
+mean(predicted_svm==df_test$churn)
+```
+
+SVM Confusion Matrix
+```{r}
+svm_ct <- table(predicted_svm, df_test$churn)
+svm_ct
+svm_recall <- svm_ct[2,2]/(svm_ct[2,2]+svm_ct[1,2])
+svm_recall
+```
+
+
+# Model tuning
+## Logit regression
+### stepAIC
+First we'll build an initial logistic model with all variables included. Then we will use stepwise feature selection methods with the function called 'stepAIC'. The function will iterate through all the variables until the lowest AIC model among all models is discovered, we will use the variables in the lowest AIC model.
+```{r}
+model_AIC_1 <- glm(churn~.,df_train, family=binomial(link = "logit"))
+summary(model_AIC_1)
+```
+
+```{r}
+model_AIC_2 <- stepAIC(model_AIC_1,direction = "both")
+```
+
+```{r}
+summary(model_AIC_2)
+```
+From the result we can see the best model obtained with lowest AIC, as shown below
+
+```{r}
+model_logit_tuned <- glm(formula = churn ~ seniorCitizen + phoneService + multipleLines +internetService + onlineBackup + deviceProtection + streamingTV + streamingMovies + contract + paperlessBilling + paymentMethod +  tenure + monthlyCharges, family = binomial(link = "logit"), data = df_train)
+```
+
+### Validating tuned Logit Model
+```{r}
+df_test$logit_pred_prob_tuned <- predict(model_logit_tuned, df_test, type="response") 
+df_test$logit_pred_class_tuned <- ifelse(df_test$logit_pred_prob_tuned>0.5,"Yes","No")
+```
+
+Accuracy
+```{r}
+mean(df_test$logit_pred_class_tuned==df_test$churn)
+```
+
+Confusion Matrix & recall
+```{r}
+logit_tuned_ct <- table(df_test$logit_pred_class, df_test$churn) 
+logit_tuned_ct
+logit_tuned_recall <- logit_tuned_ct[2,2]/(logit_tuned_ct[2,2]+logit_tuned_ct[1,2]) 
+logit_tuned_recall
+```
+We can see that the accuracy and recall of the logit model didn't change much. This might because the variables omitted were not significant in the original logit model.
+
+## Random Forest
+### Hyper Tuning
+```{r}
+set.seed(1)
+res <- tuneRF(x = df_train %>% dplyr::select(-churn), y = df_train$churn, mtryStart=2, ntreeTry = 500)
+```
+We can see that when mtry=2, the model gives the lowest OOB error.
+
+### Mean decrease GINI
+```{r}
+set.seed(1) 
+model_rf_tuning <- randomForest(churn~., df_train, ntree=500, mtry=2)
+varImpPlot(model_rf_tuning)
+```
+This is a fundamental outcome of the random forest and it shows, for each variable, how important it is in classifying the customer churn. The Mean Decrease Accuracy plot expresses how much accuracy the model losses by excluding each variable. The more the accuracy suffers, the more important the variable is for the successful classification. The variables are presented from descending importance. The mean decrease in Gini coefficient is a measure of how each variable contributes to the homogeneity of the nodes and leaves in the resulting random forest. The higher the value of mean decrease accuracy or mean decrease Gini score, the higher the importance of the variable in the model.
+As a result, we can see that tenure, monthlyCharges and contract are the most important; paymentMethod and internetService are the second important, onlineSecurity, paperlessBilling and techSupport are relatively more important than the rest.
+
+### Tuned Random Forest Validation
+Use only the variables with highest mean decrease gini
+```{r}
+model_rf_tuned <- randomForest(churn~tenure+monthlyCharges+contract+paymentMethod+internetService+onlineSecurity+paperlessBilling+techSupport, df_train, ntree=500, mtry=2)
+df_test$rf_vote_tuned <- predict(model_rf_tuned, df_test, type="class")
+mean(df_test$rf_vote_tuned==df_test$churn)
+```
+
+Random Forest Confusion Matrix
+```{r}
+rf_tuned_ct <- table(df_test$rf_vote_tuned, df_test$churn)
+rf_tuned_ct
+rf_tuned_recall <- rf_tuned_ct[2,2]/(rf_tuned_ct[2,2]+rf_tuned_ct[1,2])
+rf_tuned_recall
+```
+We see there's 0.2% increase (from 0.7967 to 0.7981) in accuracy, and 5% increase (from 0.4462 to 0.4965) in recall.
+
+```{r}
+library(pROC)
+ct_roc <- roc(df_test$churn, df_test$tree_pred_prob, auc=TRUE)
+#ct <- roc(df_test$churn, df_test$rf_vote_tuned, auc=TRUE)
+logit_roc <- roc()
+```
+
+
+
