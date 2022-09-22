@@ -1,6 +1,6 @@
 # Telco-Customer-Churn-Prediction
 
-**URL for project website:**
+**URL for project website: **
 https://www.kaggle.com/code/farrahxym/telco-customer-churn-prediction-in-r/notebook
 
 **Project description**
@@ -10,5 +10,5 @@ Churn rate is a term that refers to the number of individuals or items leaving a
 We're curious why customers leave or remain in a particular service. In this project, we explored the factors affecting churn rate, and designed methods to predict possibility of churn. The results can be used by companies to develop strategies for reducing customer churn.
 
 
-**Data source**
+**Data source: **
 https://www.kaggle.com/code/farrahxym/telco-customer-churn-prediction-in-r/data?select=WA_Fn-UseC_-Telco-Customer-Churn.csv
